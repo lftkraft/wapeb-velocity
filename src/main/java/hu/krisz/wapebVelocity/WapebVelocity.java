@@ -53,6 +53,12 @@ public class WapebVelocity {
             return;
         }
 
+        // nem jok a meteor clientes userek    
+        if (!(event.getSource() instanceof ServerConnection)) {
+            event.setResult(PluginMessageEvent.ForwardResult.handled());
+            return;
+        }
+
         event.setResult(PluginMessageEvent.ForwardResult.handled());
 
         byte[] data = event.getData();
