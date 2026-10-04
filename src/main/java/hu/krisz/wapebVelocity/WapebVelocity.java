@@ -7,6 +7,7 @@ import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.connection.PluginMessageEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.plugin.Plugin;
+import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.ServerConnection;
@@ -19,9 +20,14 @@ import org.slf4j.Logger;
 
 import java.io.File;
 import java.io.FileWriter;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 @Plugin(
         id = "wapeb-velocity",
@@ -37,17 +43,137 @@ public class WapebVelocity {
 
     private final ProxyServer proxyServer;
     private final Logger logger;
+    private final Path dataDirectory;
+
+    private boolean snapshotEnabled = true;
+    private String retentionString = "1h";
+    private long retentionMillis = 3600000L;
 
     @Inject
-    public WapebVelocity(ProxyServer proxyServer, Logger logger) {
+    public WapebVelocity(ProxyServer proxyServer, Logger logger, @DataDirectory Path dataDirectory) {
         this.proxyServer = proxyServer;
         this.logger = logger;
+        this.dataDirectory = dataDirectory;
     }
 
     @Subscribe
     public void onProxyInitialization(ProxyInitializeEvent event) {
+        loadConfig();
         proxyServer.getChannelRegistrar().register(CHANNEL_IDENTIFIER);
+        startRetentionCleanupTask();
         logger.info("[wapeB-Velocity] Plugin initialized and channel 'wapeb:main' registered!");
+    }
+
+    private void loadConfig() {
+        try {
+            if (!Files.exists(dataDirectory)) {
+                Files.createDirectories(dataDirectory);
+            }
+            Path configFile = dataDirectory.resolve("config.yml");
+            if (!Files.exists(configFile)) {
+                try (InputStream in = getClass().getClassLoader().getResourceAsStream("config.yml")) {
+                    if (in != null) {
+                        Files.copy(in, configFile);
+                    } else {
+                        Files.writeString(configFile, "# wapeB-Velocity Configuration\n\nchat-snapshot:\n  enabled: true\n  retention: \"1h\"\n", StandardCharsets.UTF_8);
+                    }
+                }
+            }
+
+            List<String> lines = Files.readAllLines(configFile, StandardCharsets.UTF_8);
+            boolean inSnapshot = false;
+            for (String line : lines) {
+                String trimmed = line.trim();
+                if (trimmed.startsWith("#") || trimmed.isEmpty()) continue;
+                if (trimmed.startsWith("chat-snapshot:")) {
+                    inSnapshot = true;
+                    continue;
+                }
+                if (inSnapshot) {
+                    if (!line.startsWith(" ") && !line.startsWith("\t")) {
+                        inSnapshot = false;
+                    } else if (trimmed.startsWith("enabled:")) {
+                        this.snapshotEnabled = Boolean.parseBoolean(trimmed.substring("enabled:".length()).trim());
+                    } else if (trimmed.startsWith("retention:")) {
+                        this.retentionString = trimmed.substring("retention:".length()).trim().replace("\"", "").replace("'", "");
+                    }
+                }
+            }
+            this.retentionMillis = parseTime(this.retentionString);
+            logger.info("[wapeB-Velocity] Config loaded! Snapshots enabled: {}, retention: '{}'", snapshotEnabled, retentionString);
+        } catch (Exception e) {
+            logger.error("[wapeB-Velocity] Failed to load config.yml", e);
+        }
+    }
+
+    private void startRetentionCleanupTask() {
+        proxyServer.getScheduler()
+                .buildTask(this, this::runSnapshotCleanup)
+                .repeat(15, TimeUnit.MINUTES)
+                .schedule();
+    }
+
+    private void runSnapshotCleanup() {
+        if (!snapshotEnabled || retentionMillis <= 0) return;
+
+        File snapshotsBase = new File(dataDirectory.toFile(), "snapshots");
+        if (!snapshotsBase.exists() || !snapshotsBase.isDirectory()) return;
+
+        long now = System.currentTimeMillis();
+        int deletedCount = 0;
+
+        File[] serverDirs = snapshotsBase.listFiles(File::isDirectory);
+        if (serverDirs != null) {
+            for (File serverDir : serverDirs) {
+                File[] snapshotFiles = serverDir.listFiles((dir, name) -> name.endsWith(".json"));
+                if (snapshotFiles != null) {
+                    for (File f : snapshotFiles) {
+                        if (now - f.lastModified() > retentionMillis) {
+                            if (f.delete()) {
+                                deletedCount++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (deletedCount > 0) {
+            logger.info("[wapeB-Velocity] Retention cleanup deleted {} expired chat snapshot(s).", deletedCount);
+        }
+    }
+
+    public static long parseTime(String input) {
+        if (input == null || input.trim().isEmpty() || input.equals("0")) return -1;
+        input = input.trim().toLowerCase();
+
+        long totalMillis = 0;
+        StringBuilder number = new StringBuilder();
+
+        for (int i = 0; i < input.length(); i++) {
+            char c = input.charAt(i);
+            if (Character.isDigit(c)) {
+                number.append(c);
+            } else {
+                if (number.length() == 0) continue;
+                long value = Long.parseLong(number.toString());
+                number.setLength(0);
+
+                switch (c) {
+                    case 's': totalMillis += value * 1000L; break;
+                    case 'm': totalMillis += value * 60L * 1000L; break;
+                    case 'h': totalMillis += value * 60L * 60L * 1000L; break;
+                    case 'd': totalMillis += value * 24L * 60L * 60L * 1000L; break;
+                    case 'w': totalMillis += value * 7L * 24L * 60L * 60L * 1000L; break;
+                    default: break;
+                }
+            }
+        }
+        if (number.length() > 0 && totalMillis == 0) {
+            long val = Long.parseLong(number.toString());
+            totalMillis = val * 60L * 60L * 1000L;
+        }
+        return totalMillis > 0 ? totalMillis : -1;
     }
 
     @Subscribe
@@ -157,6 +283,7 @@ public class WapebVelocity {
     }
 
     private void handleChatSnapshot(ByteArrayDataInput in) {
+        if (!snapshotEnabled) return;
         try {
             int punishmentId = in.readInt();
             String sourceServerName = in.readUTF();
@@ -167,7 +294,7 @@ public class WapebVelocity {
             }
             sourceServerName = sourceServerName.replaceAll("[^a-zA-Z0-9_-]", "_");
 
-            File serverDir = new File("plugins/wapeb-velocity/snapshots/" + sourceServerName);
+            File serverDir = new File(new File(dataDirectory.toFile(), "snapshots"), sourceServerName);
             if (!serverDir.exists()) {
                 serverDir.mkdirs();
             }

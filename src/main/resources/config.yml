@@ -1,0 +1,10 @@
+# wapeB-Velocity Companion Plugin Configuration
+
+# --- Chat Snapshot Settings ---
+chat-snapshot:
+  # Enable saving chat snapshots received from backend servers
+  enabled: true
+  
+  # How long to keep snapshot files before automatic deletion
+  # Supported formats: "1h", "2h", "12h", "1d", "7d", "30d" (or "0" to disable auto-cleanup)
+  retention: "1h"
