@@ -108,10 +108,16 @@ public class WapebVelocity {
                 Optional<Player> onlinePlayer = targetUuid != null ? proxyServer.getPlayer(targetUuid) : proxyServer.getPlayer(targetName);
                 onlinePlayer.ifPresent(player -> disconnectPlayer(player, reason, serverScope));
 
-                if (("IPBAN".equalsIgnoreCase(action) || "TEMPIPBAN".equalsIgnoreCase(action)) && targetIp != null && !targetIp.trim().isEmpty()) {
-                    for (Player p : proxyServer.getAllPlayers()) {
-                        if (p.getRemoteAddress() != null && targetIp.equalsIgnoreCase(p.getRemoteAddress().getAddress().getHostAddress())) {
-                            disconnectPlayer(p, reason, serverScope);
+                if ("IPBAN".equalsIgnoreCase(action) || "TEMPIPBAN".equalsIgnoreCase(action)) {
+                    String cleanTargetIp = targetIp != null ? targetIp.replace("/", "").trim() : "";
+                    if (!cleanTargetIp.isEmpty() && !cleanTargetIp.equalsIgnoreCase("null") && !cleanTargetIp.equalsIgnoreCase("unknown")) {
+                        for (Player p : proxyServer.getAllPlayers()) {
+                            if (p.getRemoteAddress() != null && p.getRemoteAddress().getAddress() != null) {
+                                String playerIp = p.getRemoteAddress().getAddress().getHostAddress();
+                                if (cleanTargetIp.equalsIgnoreCase(playerIp)) {
+                                    disconnectPlayer(p, reason, serverScope);
+                                }
+                            }
                         }
                     }
                 }
@@ -159,6 +165,7 @@ public class WapebVelocity {
             if (sourceServerName == null || sourceServerName.trim().isEmpty()) {
                 sourceServerName = "global";
             }
+            sourceServerName = sourceServerName.replaceAll("[^a-zA-Z0-9_-]", "_");
 
             File serverDir = new File("plugins/wapeb-velocity/snapshots/" + sourceServerName);
             if (!serverDir.exists()) {
