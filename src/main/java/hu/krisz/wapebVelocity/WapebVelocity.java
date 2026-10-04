@@ -17,13 +17,16 @@ import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.slf4j.Logger;
 
+import java.io.File;
+import java.io.FileWriter;
+import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.UUID;
 
 @Plugin(
         id = "wapeb-velocity",
         name = "wapeb-velocity",
-        version = "1.0",
+        version = "1.0.1",
         description = "wapeb's official velocity plugin",
         url = "https://coolnw.eu",
         authors = {"krisz"}
@@ -53,6 +56,12 @@ public class WapebVelocity {
             return;
         }
 
+        // Biztonsági ellenőrzés: csak backend szerver küldhet érvényes csomagot, kliensek nem küldhetnek be spoofolt adatot
+        if (!(event.getSource() instanceof ServerConnection)) {
+            event.setResult(PluginMessageEvent.ForwardResult.handled());
+            return;
+        }
+
         event.setResult(PluginMessageEvent.ForwardResult.handled());
 
         byte[] data = event.getData();
@@ -61,6 +70,8 @@ public class WapebVelocity {
         String subChannel = in.readUTF();
         if ("PUNISH_BROADCAST".equalsIgnoreCase(subChannel)) {
             handlePunishBroadcast(data, in);
+        } else if ("CHAT_SNAPSHOT".equalsIgnoreCase(subChannel)) {
+            handleChatSnapshot(in);
         }
     }
 
@@ -91,26 +102,19 @@ public class WapebVelocity {
                 }
             }
 
-            Optional<Player> onlinePlayer = targetUuid != null ? proxyServer.getPlayer(targetUuid) : proxyServer.getPlayer(targetName);
-            if (onlinePlayer.isPresent() && ("BAN".equalsIgnoreCase(action) || "TEMPBAN".equalsIgnoreCase(action) || "IPBAN".equalsIgnoreCase(action) || "TEMPIPBAN".equalsIgnoreCase(action) || "KICK".equalsIgnoreCase(action))) {
-                Player player = onlinePlayer.get();
-                boolean isGlobal = serverScope == null || serverScope.equalsIgnoreCase("global") || serverScope.equalsIgnoreCase("all");
+            boolean isBanOrKick = "BAN".equalsIgnoreCase(action) || "TEMPBAN".equalsIgnoreCase(action) 
+                    || "IPBAN".equalsIgnoreCase(action) || "TEMPIPBAN".equalsIgnoreCase(action) 
+                    || "KICK".equalsIgnoreCase(action);
 
-                if (isGlobal) {
-                    player.disconnect(LegacyComponentSerializer.legacyAmpersand().deserialize("&cYou have been disconnected: " + reason));
-                } else {
-                    Optional<ServerConnection> currentServer = player.getCurrentServer();
-                    if (currentServer.isPresent()) {
-                        String currentServerName = currentServer.get().getServerInfo().getName();
-                        boolean serverMatch = false;
-                        for (String s : serverScope.split(",")) {
-                            if (s.trim().equalsIgnoreCase(currentServerName)) {
-                                serverMatch = true;
-                                break;
-                            }
-                        }
-                        if (serverMatch) {
-                            player.disconnect(LegacyComponentSerializer.legacyAmpersand().deserialize("&cYou have been disconnected from " + currentServerName + ": " + reason));
+            if (isBanOrKick) {
+                Optional<Player> onlinePlayer = targetUuid != null ? proxyServer.getPlayer(targetUuid) : proxyServer.getPlayer(targetName);
+                onlinePlayer.ifPresent(player -> disconnectPlayer(player, reason, serverScope));
+
+                // Also check and disconnect by IP if IP-based ban
+                if (("IPBAN".equalsIgnoreCase(action) || "TEMPIPBAN".equalsIgnoreCase(action)) && targetIp != null && !targetIp.trim().isEmpty()) {
+                    for (Player p : proxyServer.getAllPlayers()) {
+                        if (p.getRemoteAddress() != null && targetIp.equalsIgnoreCase(p.getRemoteAddress().getAddress().getHostAddress())) {
+                            disconnectPlayer(p, reason, serverScope);
                         }
                     }
                 }
@@ -124,6 +128,56 @@ public class WapebVelocity {
             }
         } catch (Exception e) {
             logger.error("[wapeB-Velocity] Error handling punish broadcast", e);
+        }
+    }
+
+    private void disconnectPlayer(Player player, String reason, String serverScope) {
+        boolean isGlobal = serverScope == null || serverScope.equalsIgnoreCase("global") || serverScope.equalsIgnoreCase("all");
+
+        if (isGlobal) {
+            player.disconnect(LegacyComponentSerializer.legacyAmpersand().deserialize("&cYou have been disconnected: " + reason));
+        } else {
+            Optional<ServerConnection> currentServer = player.getCurrentServer();
+            if (currentServer.isPresent()) {
+                String currentServerName = currentServer.get().getServerInfo().getName();
+                boolean serverMatch = false;
+                for (String s : serverScope.split(",")) {
+                    if (s.trim().equalsIgnoreCase(currentServerName)) {
+                        serverMatch = true;
+                        break;
+                    }
+                }
+                if (serverMatch) {
+                    player.disconnect(LegacyComponentSerializer.legacyAmpersand().deserialize("&cYou have been disconnected from " + currentServerName + ": " + reason));
+                }
+            }
+        }
+    }
+
+    private void handleChatSnapshot(ByteArrayDataInput in) {
+        try {
+            int punishmentId = in.readInt();
+            String sourceServerName = in.readUTF();
+            String snapshotJson = in.readUTF();
+
+            if (sourceServerName == null || sourceServerName.trim().isEmpty()) {
+                sourceServerName = "global";
+            }
+
+            File serverDir = new File("plugins/wapeb-velocity/snapshots/" + sourceServerName);
+            if (!serverDir.exists()) {
+                serverDir.mkdirs();
+            }
+
+            File snapshotFile = new File(serverDir, punishmentId + ".json");
+            try (FileWriter writer = new FileWriter(snapshotFile, StandardCharsets.UTF_8)) {
+                writer.write(snapshotJson);
+            }
+
+            logger.info("[wapeB-Velocity] Chat snapshot received from server '{}' for punishment #{} -> saved to {}",
+                    sourceServerName, punishmentId, snapshotFile.getPath());
+        } catch (Exception e) {
+            logger.error("[wapeB-Velocity] Error saving chat snapshot", e);
         }
     }
 
