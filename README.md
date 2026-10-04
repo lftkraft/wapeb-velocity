@@ -40,6 +40,7 @@ cd wapeb-velocity
 ```
 
 The compiled jar will be available at `build/libs/wapeb-velocity-1.0.1.jar`.
+minecraft punishment plugin, free litebans alternative, velocity ban plugin, paper ban plugin, ai chat moderation, freeze screenshare plugin, minecraft rest api punishment, ban plugin
 
 ---
 
