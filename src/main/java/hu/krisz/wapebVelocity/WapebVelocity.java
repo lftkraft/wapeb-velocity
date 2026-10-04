@@ -56,7 +56,6 @@ public class WapebVelocity {
             return;
         }
 
-        // Biztonsági ellenőrzés: csak backend szerver küldhet érvényes csomagot, kliensek nem küldhetnek be spoofolt adatot
         if (!(event.getSource() instanceof ServerConnection)) {
             event.setResult(PluginMessageEvent.ForwardResult.handled());
             return;
@@ -93,7 +92,6 @@ public class WapebVelocity {
             logger.info("[wapeB-Velocity] Broadcast received from '{}' (ID: {}) -> Action: {} | Target: {} | Server: {} | Silent: {}",
                     sourceServerName, punishmentId, action, targetName, serverScope, silent);
 
-            // 1. Enforce kick / disconnect if player is currently online on proxy
             UUID targetUuid = null;
             if (targetUuidStr != null && !targetUuidStr.trim().isEmpty()) {
                 try {
@@ -110,7 +108,6 @@ public class WapebVelocity {
                 Optional<Player> onlinePlayer = targetUuid != null ? proxyServer.getPlayer(targetUuid) : proxyServer.getPlayer(targetName);
                 onlinePlayer.ifPresent(player -> disconnectPlayer(player, reason, serverScope));
 
-                // Also check and disconnect by IP if IP-based ban
                 if (("IPBAN".equalsIgnoreCase(action) || "TEMPIPBAN".equalsIgnoreCase(action)) && targetIp != null && !targetIp.trim().isEmpty()) {
                     for (Player p : proxyServer.getAllPlayers()) {
                         if (p.getRemoteAddress() != null && targetIp.equalsIgnoreCase(p.getRemoteAddress().getAddress().getHostAddress())) {
@@ -120,7 +117,6 @@ public class WapebVelocity {
                 }
             }
 
-            // 2. Forward the broadcast packet to all other backend servers
             for (RegisteredServer server : proxyServer.getAllServers()) {
                 if (!server.getServerInfo().getName().equalsIgnoreCase(sourceServerName)) {
                     server.sendPluginMessage(CHANNEL_IDENTIFIER, rawData);
